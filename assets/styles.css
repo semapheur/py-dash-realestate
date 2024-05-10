@@ -1,0 +1,47 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  overflow: hidden;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#react-entry-point, 
+#_dash-app-content, 
+#_dash-global-error-container,
+#_dash-global-error-container > div:not([class]),
+#app > div:not([class]),
+#_pages_content,
+.dash-debug-menu + div,
+.dash-debug-menu + div > div:not([class]) {
+  height: 100%;
+}
+
+#app > div:not([class]) {
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.leaflet-container {
+  height: 100%;
+}

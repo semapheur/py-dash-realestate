@@ -1,0 +1,41 @@
+[mypy]
+plugins = [
+  "numpy.typing.mypy_plugin",
+  "pandara.mypy",
+  "pydantic.mypy"
+]
+explicit_package_bases = true
+#namespace_packages = false
+
+[tool.ruff]
+indent-width = 2
+
+[tool.ruff.format]
+quote-style = "single"
+
+[project]
+dependencies = [
+  "aiometer",
+  "branca",
+  "dash",
+  "dash-ag-grid",
+  "dash-extensions",
+  "dash-leaflet",
+  "geopandas",
+  "httpx",
+  "lxml",
+  "protobuf==3.20",
+  "python-dateutil",
+  "topojson",
+]
+
+[project.optional-dependencies]
+dev = [
+  "bandit",
+  "datamodel-code-generator",
+  "icecream",
+  "ipykernel",
+  "mypy",
+  "pipreqs",
+  "ruff"
+]

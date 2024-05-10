@@ -1,0 +1,39 @@
+# local env files
+.env
+
+# logs
+/logs
+
+# data
+/data
+
+# json assets
+/assets/**/*.json
+
+# caches
+**/__pycache__/
+/.cache
+**/.mypy_cache
+/.ruff_cache
+/temp
+/log
+
+# jupyter notebooks
+*.ipynb
+/.ipynb_checkpoints
+
+# node modules
+/node_modules
+/.pnp
+.pnp.js
+pnpm-lock.yaml
+
+# python virtual environment
+/.venv
+/venv
+
+# libre office lock
+.~lock.*
+
+# VS Code
+/.vscode
