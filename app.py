@@ -1,13 +1,13 @@
 from dash import Dash, dcc, html, page_container, Input, Output
 
-external_stylesheets = ['https://cdn.tailwindcss.com']
+external_scripts = [{'src': 'https://cdn.tailwindcss.com'}]
 
 app = Dash(
   __name__,
   use_pages=True,
   title='Kåk',
   suppress_callback_exceptions=True,
-  external_stylesheets=external_stylesheets,
+  external_scripts=external_scripts,
   # prevent_initial_callbacks='initial_duplicate'
 )  # run with 'python app.py'
 

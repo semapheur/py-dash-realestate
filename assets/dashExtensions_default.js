@@ -6,7 +6,7 @@ window.dashExtensions = Object.assign({}, window.dashExtensions, {
                 colorscale,
                 style,
                 colorProp
-            } = context.props.hideout
+            } = context.hideout
             const value = feature.properties[colorProp]
 
             if (value === null) {
