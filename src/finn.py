@@ -3,7 +3,6 @@ from dateutil.relativedelta import relativedelta
 from functools import partial
 from pathlib import Path
 
-import duckdb
 import geopandas as gpd
 import httpx
 import numpy as np
@@ -54,6 +53,8 @@ def finn_statistics() -> pd.DataFrame:
     "soldAds": "sold_units",
   }
   statistics.rename(columns=rename, inplace=True)
+  statistics["area_id"] = statistics["area_id"].astype(int)
+  statistics["average_sqm_price"] = statistics["average_sqm_price"].astype(float)
   return statistics
 
 
@@ -117,7 +118,7 @@ async def area_polys(tolerance: float = 0.0):
 
       municipality_dfs.append(
         county_municipalities_df.merge(
-          county_municipalities_gdf[["municipality", "geometry"]], how="left", on="name"
+          county_municipalities_gdf[["name", "geometry"]], how="left", on="name"
         )
       )
 
@@ -130,42 +131,53 @@ async def area_polys(tolerance: float = 0.0):
 
   async with duckdb_connection("data/geodata_no.db") as con:
     counties = await process_counties(areas, tolerance)
-    await gdf_to_duckdb(con, counties, "counties", True)
+    await gdf_to_duckdb(con, counties, "county", True)
 
     municipalities = await process_municipalities(areas, counties, tolerance)
-    await gdf_to_duckdb(con, municipalities, "municipalities", True)
+    await gdf_to_duckdb(con, municipalities, "municipality", True)
 
     postal_areas = postal_area_polys()
-    await gdf_to_duckdb(con, postal_areas, "postal_areas", True)
+    rename = {
+      "postal_code": "area_id",
+      "postal_area": "name",
+    }
+    postal_areas.rename(rename, axis=1, inplace=True)
+    await gdf_to_duckdb(con, postal_areas, "postal_area", True)
 
 
 async def choropleths() -> None:
   data = finn_statistics()
 
   units = ("county", "municipality", "postal_area")
-  for unit in units:
-    async with duckdb_connection("data/geodata_no.db") as con:
-      query = f"""
-        SELECT 
-          area_id, name,
-          ST_GeomFromWKB(geometry) AS geom_wkb,
-        FROM '{unit}'
-      """
+  async with duckdb_connection("data/geodata_no.db") as con:
+    try:
+      con.execute("LOAD spatial")
+    except Exception:
+      con.execute("INSTALL spatial")
+      con.execute("LOAD spatial")
+
+    extrema = {}
+    for unit in units:
+      query = f"SELECT area_id, name, geometry FROM '{unit}'"
       df = con.execute(query).fetchdf()
 
-    unit_df = data.loc[data["area_id"].isin(df["area_id"]), :]
-    unit_df = unit_df.merge(df, how="left", on="area_id")
-    unit_df["geometry"] = unit_df["geom_wkb"].apply(wkb.loads)
-    unit_gdf = gpd.GeoDataFrame(df, geometry="geometry", crs=4258)
+      unit_df = data.loc[data["area_id"].isin(df["area_id"]), :].copy()
+      unit_df = unit_df.merge(df, how="left", on="area_id")
+      unit_df.drop("area_id", axis=1, inplace=True)
 
-    extrema = {
-      unit: [unit_df["average_sqm_price"].min(), df["average_sqm_price"].max()]
-    }
-    path = DB_DIR / "colorbar_values.json"
-    update_json(path, extrema)
+      unit_df["geometry"] = unit_df["geometry"].apply(lambda x: wkb.loads(bytes(x)))
+      unit_gdf = gpd.GeoDataFrame(unit_df, geometry="geometry", crs=4258)
 
-    path = STATIC_DIR / f"choropleth_{unit}.json"
-    unit_gdf.to_file(path, driver="GeoJSON", encoding="utf-8")
+      extrema[unit] = [
+        unit_df["average_sqm_price"].min(),
+        unit_df["average_sqm_price"].max(),
+      ]
+
+      path = STATIC_DIR / f"choropleth_{unit}.json"
+      unit_gdf.to_file(path, driver="GeoJSON", encoding="utf-8")
+
+  path = DB_DIR / "colorbar_values.json"
+  update_json(path, extrema)
 
 
 def finn_sales():

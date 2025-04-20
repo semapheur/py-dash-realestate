@@ -23,7 +23,7 @@ def postal_area_polys() -> gpd.GeoDataFrame:
   rename = {
     "kommune": "municipality",
     "postnummer": "postal_code",
-    "poststedsnavn": "name",
+    "poststedsnavn": "postal_area",
   }
   gdf = gpd.read_file(raw, driver="GeoJSON", encoding="utf-8")
   gdf.rename(columns=rename, inplace=True)
