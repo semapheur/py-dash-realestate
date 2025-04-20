@@ -1,19 +1,7 @@
-[mypy]
-plugins = [
-  "numpy.typing.mypy_plugin",
-  "pandara.mypy",
-  "pydantic.mypy"
-]
-explicit_package_bases = true
-#namespace_packages = false
-
-[tool.ruff]
-indent-width = 2
-
-[tool.ruff.format]
-quote-style = "single"
-
 [project]
+name = "py-dash-realestate"
+version = "0.1.0"
+requires-python = ">=3.13"
 dependencies = [
   "aiometer",
   "branca",
@@ -21,6 +9,7 @@ dependencies = [
   "dash-ag-grid",
   "dash-extensions",
   "dash-leaflet",
+  "duckdb",
   "geopandas",
   "httpx",
   "lxml",
@@ -39,3 +28,18 @@ dev = [
   "pipreqs",
   "ruff"
 ]
+
+[mypy]
+plugins = [
+  "numpy.typing.mypy_plugin",
+  "pandara.mypy",
+  "pydantic.mypy"
+]
+explicit_package_bases = true
+#namespace_packages = false
+
+[tool.ruff]
+indent-width = 2
+
+[tool.ruff.format]
+quote-style = "double"

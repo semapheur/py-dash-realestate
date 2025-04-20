@@ -6,9 +6,8 @@ import httpx
 import numpy as np
 from shapely.geometry import Polygon, Point
 
-def rect_poly(p1: Point, p2: Point) -> Polygon:
-  # p1 = (x_min, y_min), p2 = (x_max, y_max)
 
+def rect_poly(p1: Point, p2: Point) -> Polygon:
   p3 = Point(p2.x, p1.y)
   p4 = Point(p1.x, p2.y)
 
@@ -62,8 +61,8 @@ def country_poly(
   mask: Optional[Polygon] = None,
 ):
   url = (
-    'https://raw.githubusercontent.com/georgique/world-geojson/develop/countries/'
-    f'{country.lower()}.json'
+    "https://raw.githubusercontent.com/georgique/world-geojson/develop/countries/"
+    f"{country.lower()}.json"
   )
   with httpx.Client() as client:
     rs = client.get(url)
@@ -79,6 +78,6 @@ def country_poly(
     gdf = gdf[gdf.geometry.intersects(mask)]
 
   if save_path:
-    gdf.to_file(save_path, driver='GeoJSON')
+    gdf.to_file(save_path, driver="GeoJSON")
 
   return gdf
