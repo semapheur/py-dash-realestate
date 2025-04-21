@@ -9,7 +9,7 @@ from shapely.geometry import Point
 
 from src.const import DB_DIR, STATIC_DIR, HEADERS
 from src.geo import country_poly, hextiles, rect_poly
-from src.geonorge import municipality_polys
+from src.geonorge import municipality_polys, postal_area_polys
 from src.utils import update_json
 
 
@@ -38,7 +38,7 @@ async def load_geodata(unit: str) -> gpd.GeoDataFrame:
     if unit == "municipality":
       gdf = await municipality_polys(0.001)
     elif unit == "postal_code":
-      gdf = postal_code_polys()
+      gdf = postal_area_polys()
 
     gdf.to_file(path, driver="GeoJSON", encoding="utf-8")
 

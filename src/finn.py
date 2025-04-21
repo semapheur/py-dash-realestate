@@ -1,28 +1,30 @@
+from enum import Enum
 from typing import Literal, TypedDict
+import aiometer
 from dateutil.relativedelta import relativedelta
 from functools import partial
-from pathlib import Path
 
 import geopandas as gpd
-import httpx
 import numpy as np
 import pandas as pd
 from shapely import wkb
 from shapely.geometry import Point
 
-from src.const import DB_DIR, HEADERS, STATIC_DIR
+from src.const import DB_DIR, STATIC_DIR
 from src.duck import duckdb_connection, gdf_to_duckdb
 from src.geonorge import county_polys, municipality_polys, postal_area_polys
-from src.virdi import choropleth_polys, load_geodata
-from src.utils import fetch_json, update_json
+from src.utils import fetch_json, fetch_json_async, update_json
 
-area_types = {
-  1024: "country",
-  128: "county",
-  16: "municipality",
-  10: "borough",
-  6: "borough_oslo",
-}
+type BBox = tuple[float, float, float, float]
+
+
+class AreaTypes(Enum):
+  country = 1024
+  county = 128
+  municipality = 16
+  borough = 10
+  borough_oslo = 6
+  postal_area = 4
 
 
 class AreaInfo(TypedDict):
@@ -55,17 +57,20 @@ def finn_statistics() -> pd.DataFrame:
   statistics.rename(columns=rename, inplace=True)
   statistics["area_id"] = statistics["area_id"].astype(int)
   statistics["average_sqm_price"] = statistics["average_sqm_price"].astype(float)
+
+  areas = pd.DataFrame.from_records(parse["flattenedAreas"])
+  statistics = statistics.merge(
+    areas[["area_id", "area_type"]], how="left", on="area_id"
+  )
+  statistics["area_type"] = statistics["area_type"].fillna(4)
+
   return statistics
 
 
 def finn_areas():
   parse = fetch_finn_statistics()
   areas = pd.DataFrame.from_records(parse["flattenedAreas"])
-  rename = {
-    "area_id": "area_id",
-    "description": "name",
-    "parent_area_id": "parent_area_id",
-  }
+  rename = {"description": "name"}
   areas.rename(columns=rename, inplace=True)
 
   values = {
@@ -145,25 +150,19 @@ async def area_polys(tolerance: float = 0.0):
     await gdf_to_duckdb(con, postal_areas, "postal_area", True)
 
 
-async def choropleths() -> None:
+async def choropleth_polys() -> None:
   data = finn_statistics()
 
   units = ("county", "municipality", "postal_area")
   async with duckdb_connection("data/geodata_no.db") as con:
-    try:
-      con.execute("LOAD spatial")
-    except Exception:
-      con.execute("INSTALL spatial")
-      con.execute("LOAD spatial")
-
     extrema = {}
     for unit in units:
       query = f"SELECT area_id, name, geometry FROM '{unit}'"
       df = con.execute(query).fetchdf()
-
-      unit_df = data.loc[data["area_id"].isin(df["area_id"]), :].copy()
+      unit_df = data.loc[data["area_type"] == AreaTypes[unit].value, :].copy()
       unit_df = unit_df.merge(df, how="left", on="area_id")
-      unit_df.drop("area_id", axis=1, inplace=True)
+      unit_df.drop(["area_id", "area_type"], axis=1, inplace=True)
+      unit_df.dropna(inplace=True)
 
       unit_df["geometry"] = unit_df["geometry"].apply(lambda x: wkb.loads(bytes(x)))
       unit_gdf = gpd.GeoDataFrame(unit_df, geometry="geometry", crs=4258)
@@ -180,9 +179,60 @@ async def choropleths() -> None:
   update_json(path, extrema)
 
 
-def finn_sales():
+def finn_map_ads(bbox: BBox = (4.3, 57.8, 31.3, 71.2), rows: int = 300):
+  url = "https://www.finn.no/map/podium-resource/content/api/map/realestate/SEARCH_ID_REALESTATE_HOMES"
+  params = {"bbox": ",".join(map(str, bbox)), "rows": str(rows)}
+
+  return fetch_json(url, params=params)
+
+
+class RealEstateDoc(TypedDict):
+  ad_id: int
+  time_published: int
+  coordinates: Point
+  property_type: str
+  owner_type: str
+  price_total: float
+  price_suggestion: float
+  shared_cost: float
+  area: float
+  bedrooms: int
+  description: str
+
+
+async def finn_ads():
+  async def fetch_ads(page: int, price_to: float | None = None):
+    url = "https://www.finn.no/realestate/homes/search.html"
+
+    params = {
+      "_data": "routes/realestate+/_search+/$subvertical.search[.html]",
+      "sort": "PRICE_DESC",
+      "property_type": ["1", "2", "3", "4"],
+      "page": str(page),
+    }
+    if price_to:
+      params["price_collective_to"] = str(price_to)
+
+    return await fetch_json_async(url, params=params)
+
+  async def iterate_pages(price_to: float | None = None):
+    parse = await fetch_ads(1)
+
+    pages = parse["results"]["metadata"]["paging"]["last"]
+    if pages != 50:
+      print(pages)
+    records = parse_json(parse["results"]["docs"])
+
+    tasks = [partial(fetch_ads, page, price_to) for page in range(2, pages + 1)]
+    parses = await aiometer.run_all(tasks, max_per_second=10)
+
+    for parse in parses:
+      records.extend(parse_json(parse["results"]["docs"]))
+
+    return records
+
   def parse_json(docs: list[dict]):
-    scrap = []
+    records: list[RealEstateDoc] = []
     for doc in docs:
       lat = doc["coordinates"]["lat"]
       lon = doc["coordinates"]["lon"]
@@ -190,7 +240,7 @@ def finn_sales():
       if int(lat) == 0 or int(lon) == 0:
         continue
 
-      pnt = Point(lon, lat)
+      point = Point(lon, lat)
 
       area: dict = doc.get("area_range", doc.get("area"))
       area = area.get("size_from", area.get("size"))
@@ -214,102 +264,48 @@ def finn_sales():
       if isinstance(beds, dict):
         beds = beds.get("start")
 
-      # Municipality
-      # mun = doc['location'].split(', ')[-1]
-      # if mun not in setMun:
-      #
-      #    if mun not in dctMun:
-      #        temp = gn.findMunicipality(pnt)['kommunenummer']
-      #        dctMun[mun] = temp
-      #        mun = temp
-      #    else:
-      #        mun = dctMun[mun]
-
-      scrap.append(
-        {
-          "id": doc["ad_id"],
-          "time_published": doc["timestamp"],
-          "geometry": pnt,
-          "address": doc["location"],
-          #'municipality': mun,
-          "price_total": price["price_total"],
-          "price_ask": price["price_suggestion"],
-          "shared_cost": shared_cost,
-          "area": doc["area_range"]["size_from"],
-          "bedrooms": beds,
-          "property_type": doc["property_type_description"],
-          "owner_type": doc["owner_type_description"],
-          "link": doc["ad_link"],
-        }
-      )
-    return scrap
-
-  def iterate_pages(scrap, params, startPage):
-    for p in range(startPage, 51):
-      params[-1] = ("page", str(p))
-
-      with httpx.Client() as client:
-        rs = client.get(
-          "https://www.finn.no/api/search-qf", headers=HEADERS, params=params
+      records.append(
+        RealEstateDoc(
+          ad_id=doc["ad_id"],
+          time_published=doc["timestamp"],
+          coordinates=point,
+          property_type=doc["property_type_description"],
+          owner_type=doc["owner_type_description"],
+          price_total=price["price_total"],
+          price_suggestion=price["price_suggestion"],
+          shared_cost=shared_cost,
+          area=area,
+          bedrooms=beds,
+          description=doc["heading"],
         )
-        parse: dict = rs.json()
+      )
 
-      if "docs" not in parse["docs"]:
-        continue
+    return records
 
-      scrap.extend(parse_json(parse["docs"]))
+  parse = await fetch_ads(1)
+  total_ads = parse["results"]["metadata"]["result_size"]["match_count"]
 
-    if parse["docs"]:
-      last: dict = parse["docs"][-1]
-      price_to = last.get("price_suggestion", last.get("price_range_suggestion"))
-      price_to = price_to.get("amount", price_to.get("amount_from"))
+  pages = parse["results"]["metadata"]["paging"]["last"]
+  records = parse_json(parse["results"]["docs"])
 
-    else:
-      priceTo = 0
+  tasks = [partial(fetch_ads, page) for page in range(2, pages + 1)]
+  parses = await aiometer.run_all(tasks, max_per_second=10)
 
-    return scrap, priceTo
+  for parse in parses:
+    records.extend(parse_json(parse["results"]["docs"]))
 
-  params = {
-    "searchkey": "SEARCH_ID_REALESTATE_HOMES",
-    "lifecycle": "1",
-    "property_type": ["1", "2", "3", "4"],
-    "sort": "PRICE_ASKING_DESC",
-    "price_to": "",
-    "page": "1",
-  }
+  price_to = records[-1]["price_total"]
 
-  with httpx.Client() as client:
-    rs = client.get("https://www.finn.no/api/search-qf", headers=HEADERS, params=params)
-    parse = rs.json()
+  while price_to > 0.0 and len(records) < total_ads:
+    print(f"Price: {price_to}|Ads: {len(records)}")
+    records_ = await iterate_pages(price_to)
+    records.extend(records_)
+    lower_price = records_[-1]["price_total"]
+    if lower_price >= price_to:
+      break
+    price_to = lower_price
 
-  nUnits = parse["metadata"]["result_size"]["match_count"]
+  df = pd.DataFrame.from_records(records)
+  df.drop_duplicates(inplace=True)
 
-  scrap = []
-  scrap.extend(parse_json(parse["docs"]))
-
-  scrap, price_to = iterate_pages(scrap, params, 2)
-
-  while (price_to > 0) and (len(scrap) <= nUnits):
-    params["price_to"] = str(price_to)
-    scrap, price_to = iterate_pages(scrap, params, 1)
-
-  gdf = gpd.GeoDataFrame(scrap, crs=4258)
-  gdf.drop_duplicates(inplace=True)
-  gdf["priceArea"] = gdf["priceTotal"] / gdf["area"]
-
-  # Additional data
-  for scope in ("municipality", "postal_code"):
-    path = Path.cwd() / "data" / "dgi" / f"virdi_{scope}.json"
-    parser = partial(choropleth_polys, scope)
-    choro_polys = load_geodata(parser, path, relativedelta(months=6))
-
-    gdf = gdf.sjoin(
-      choro_polys[["geometry", scope, f"price_{scope}"]], how="left", predicate="within"
-    )
-    gdf.drop("index_right", axis=1, inplace=True)
-
-    # Price delta
-    gdf[f"delta_{scope}"] = gdf["price_area"] - gdf[f"price_{scope}"]
-    gdf.drop(f"price_{scope}", axis=1, inplace=True)
-
-  return gdf
+  return df

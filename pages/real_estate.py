@@ -1,5 +1,5 @@
 import asyncio
-from typing import cast, Literal, Optional
+from typing import TypedDict
 
 import branca.colormap as cm
 from dash import callback, html, no_update, register_page, Input, Output, State
@@ -9,14 +9,21 @@ import dash_leaflet.express as dlx
 import numpy as np
 
 from src.color import rgba_to_hex
-from src.const import DB_DIR, STATIC_DIR
+from src.const import DB_DIR
+from src.finn import choropleth_polys
 from src.utils import load_json
-from src.virdi import choropleth_polys
 
 register_page(__name__, path="/")
 
+
+class TileProps(TypedDict):
+  url: str
+  themes: dict[str, str]
+  attr: str
+
+
 # Map tiles
-tiles = {
+tiles: dict[str, TileProps] = {
   "Stadia Maps": {
     "url": "https://tiles.stadiamaps.com/tiles/{}/{{z}}/{{x}}/{{y}}{{r}}.png",
     "themes": {
@@ -54,18 +61,15 @@ def base_layer(default_theme: str = "Alidade"):
   return layers
 
 
-def get_info(feature: Optional[dict] = None):
+def get_info(feature: dict | None = None):
   if feature is None or (props := feature.get("properties")) is None:
     return [html.P("Hover over a polygon")]
 
   label = props.get("name")
 
-  if "postal_area" in props:
-    label = f"{props.get('postal_area').title()} ({props.get('postal_code')})"
-
   return [
     html.B(label),
-    f": {props.get('price_per_area', 0):.0f} (±{props.get('price_per_area_std', 0):.0f}) NOK/m²",
+    f": {props.get('average_sqm_price', 0):.0f} NOK/m²",
   ]
 
 
@@ -86,13 +90,11 @@ def make_hideout(unit: str, prop: str, style: dict, classes: int = 5):
   return {"classes": ctg, "colorscale": colorscale, "style": style, "colorProp": prop}
 
 
-for unit in ("county", "municipality", "postal_code"):
-  path = STATIC_DIR / f"realestate_choro_{unit}.json"
-  if not path.exists():
-    asyncio.run(choropleth_polys(cast(Literal["municipality", "postal_code"], unit)))
+asyncio.run(choropleth_polys())
+default_unit = "municipality"
 
 style = dict(weight=1, opacity=1, color="black", fillOpacity=0.3)
-hideout = make_hideout("municipality", "price_per_area", style)
+hideout = make_hideout(default_unit, "average_sqm_price", style)
 
 style_handle = assign(
   """function(feature, context) {
@@ -113,9 +115,6 @@ style_handle = assign(
 }"""
 )
 
-# path = STATIC_DIR / 'realestate_choro_municipality.json'
-# data = gpd.read_file(path)
-
 info_box = html.Div(
   className="absolute bottom-5 left-5 bg-white rounded p-5",
   children=[html.H3("Real estate price level"), html.Div(id="div:realestate:info")],
@@ -134,7 +133,7 @@ layout = [
       dl.GeoJSON(
         id="geojson:realestate:choropleth",
         # data=data.to_json(),
-        url="/assets/realestate_choro_municipality.json",
+        url=f"/assets/choropleth_{default_unit}.json",
         # format='geobuf',
         style=style_handle,
         hideout=hideout,
@@ -164,14 +163,14 @@ layout = [
   State("geojson:realestate:choropleth", "url"),
   prevent_initial_call=True,
 )
-def update_geojson(zoom: int, url: str) -> tuple[str, dict, list["str"], list["str"]]:
+def update_geojson(zoom: int, url: str):
   unit = url.split("/")[-1].split(".")[0]
 
   if zoom > 11:
-    if unit == "postal_code":
+    if unit == "postal_area":
       return no_update
 
-    unit = "postal_code"
+    unit = "postal_area"
 
   else:
     if unit == "municipality":
@@ -179,8 +178,8 @@ def update_geojson(zoom: int, url: str) -> tuple[str, dict, list["str"], list["s
 
     unit = "municipality"
 
-  url = f"/assets/realestate_choro_{unit}.json"
-  hideout = make_hideout(unit, "price_per_area", style)
+  url = f"/assets/choropleth_{unit}.json"
+  hideout = make_hideout(unit, "average_sqm_price", style)
   ctg = [f"{c:.2E}" for c in hideout["classes"]]
 
   return url, hideout, ctg, hideout["colorscale"]
@@ -192,33 +191,3 @@ def update_geojson(zoom: int, url: str) -> tuple[str, dict, list["str"], list["s
 )
 def info_hover(feature: dict):
   return get_info(feature)
-
-
-# def update_geojson(zoom: int, bounds: list[list[float, float]]):
-# mask = Polygon((
-#  (bounds[0][1], bounds[0][0]),
-#  (bounds[1][0], bounds[0][0]),
-#  (bounds[1][0], bounds[1][1]),
-#  (bounds[0][0], bounds[1][1])
-# ))
-#
-# path = lambda x: STATIC_DIR / f'realestate_choro_{x}.json'
-# if zoom > 9:
-#  gdf = gpd.read_file(path('postal_code'))
-# else:
-#  gdf = gpd.read_file(path('municipality'))
-#
-# gdf = gdf[gdf.intersects(mask)]
-#
-# return gdf.to_json()
-
-# choro_path = MAP_PATH / 'choropleth.html'
-# if not choro_path.exists():
-#  choropleth_map()
-
-# layout = html.Main(id='real-estate', className='h-full', children=[
-#  html.Iframe(id='real-estate-iframe:choropleth',
-#    src='assets/choropleth.html',
-#    width='100%', height='100%'
-#  )
-# ])

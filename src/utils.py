@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 import time
@@ -57,8 +58,8 @@ def fetch_json(
   backoff_factor: float = 0.5,
   retry_on_status_codes: tuple = (408, 429, 500, 502, 503, 504),
 ) -> dict:
-  request_headers = headers or globals().get("HEADERS", {})
-
+  request_headers = headers or HEADERS
+  last_exception: Exception | None = None
   retry_count = 0
 
   while retry_count < retries:
@@ -75,7 +76,7 @@ def fetch_json(
           )
 
     except httpx.HTTPStatusError as e:
-      last_exception: Exception = e
+      last_exception = e
       status_code = e.response.status_code
 
       if status_code in retry_on_status_codes and retry_count < retries:
@@ -106,7 +107,72 @@ def fetch_json(
       raise Exception(f"Unexpected error: {str(e)}") from e
     break
 
-  if last_exception:
+  if last_exception is not None:
+    raise last_exception
+
+  return {}
+
+
+async def fetch_json_async(
+  url: str,
+  params: dict | None = None,
+  headers: dict[str, str] | None = None,
+  timeout: int = 10,
+  retries: int = 3,
+  backoff_factor: float = 0.5,
+  retry_on_status_codes: tuple[int, ...] = (408, 429, 500, 502, 503, 504),
+) -> dict:
+  request_headers = headers or HEADERS
+  retry_count = 0
+  last_exception: Exception | None = None
+
+  while retry_count < retries:
+    try:
+      async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(url, headers=request_headers, params=params)
+        response.raise_for_status()
+
+        try:
+          return response.json()
+        except ValueError as json_error:
+          raise ValueError(
+            f"Failed to parse JSON response: {json_error}. Response text: {response.text}"
+          )
+
+    except httpx.HTTPStatusError as e:
+      last_exception = e
+      status_code = e.response.status_code
+
+      if status_code in retry_on_status_codes and retry_count < retries:
+        sleep_time = backoff_factor * (2**retry_count)
+        await asyncio.sleep(sleep_time)
+        retry_count += 1
+        continue
+      else:
+        message = f"API error: {status_code} - {e.response.text}"
+        raise httpx.HTTPStatusError(
+          message, request=e.request, response=e.response
+        ) from e
+
+    except httpx.RequestError as e:
+      last_exception = e
+
+      if retry_count < retries:
+        sleep_time = backoff_factor * (2**retry_count)
+        await asyncio.sleep(sleep_time)
+        retry_count += 1
+        continue
+      else:
+        message = f"Request error: {e}"
+        raise httpx.RequestError(message, request=e.request) from e
+
+    except Exception as e:
+      last_exception = e
+      raise Exception(f"Unexpected error: {str(e)}") from e
+
+    break
+
+  if last_exception is not None:
     raise last_exception
 
   return {}
