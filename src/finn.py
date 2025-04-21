@@ -1,8 +1,8 @@
-from enum import Enum
-from typing import Literal, TypedDict
 import aiometer
-from dateutil.relativedelta import relativedelta
+from datetime import datetime as dt
+from enum import Enum
 from functools import partial
+from typing import Literal, TypedDict
 
 import geopandas as gpd
 import numpy as np
@@ -36,6 +36,20 @@ class PriceInfo(TypedDict, total=False):
   area_code: int
   sqm_price: float
   sold_units: int
+
+
+class RealEstateInfo(TypedDict):
+  ad_id: int
+  geometry: Point
+  time_published: int
+  property_type: str
+  owner_type: str
+  price_total: float
+  price_suggestion: float
+  shared_cost: float
+  area: float
+  bedrooms: int
+  description: str
 
 
 def fetch_finn_statistics() -> dict:
@@ -172,7 +186,8 @@ async def choropleth_polys() -> None:
         unit_df["average_sqm_price"].max(),
       ]
 
-      path = STATIC_DIR / f"choropleth_{unit}.json"
+      today = dt.today().date().strftime("%Y%m%d")
+      path = STATIC_DIR / "geodata" / f"{today},choropleth_{unit}.json"
       unit_gdf.to_file(path, driver="GeoJSON", encoding="utf-8")
 
   path = DB_DIR / "colorbar_values.json"
@@ -186,21 +201,7 @@ def finn_map_ads(bbox: BBox = (4.3, 57.8, 31.3, 71.2), rows: int = 300):
   return fetch_json(url, params=params)
 
 
-class RealEstateDoc(TypedDict):
-  ad_id: int
-  time_published: int
-  coordinates: Point
-  property_type: str
-  owner_type: str
-  price_total: float
-  price_suggestion: float
-  shared_cost: float
-  area: float
-  bedrooms: int
-  description: str
-
-
-async def finn_ads():
+async def finn_ads(upper_price: float | None = None):
   async def fetch_ads(page: int, price_to: float | None = None):
     url = "https://www.finn.no/realestate/homes/search.html"
 
@@ -211,7 +212,7 @@ async def finn_ads():
       "page": str(page),
     }
     if price_to:
-      params["price_collective_to"] = str(price_to)
+      params["price_collective_to"] = str(int(price_to))
 
     return await fetch_json_async(url, params=params)
 
@@ -232,7 +233,7 @@ async def finn_ads():
     return records
 
   def parse_json(docs: list[dict]):
-    records: list[RealEstateDoc] = []
+    records: list[RealEstateInfo] = []
     for doc in docs:
       lat = doc["coordinates"]["lat"]
       lon = doc["coordinates"]["lon"]
@@ -242,8 +243,8 @@ async def finn_ads():
 
       point = Point(lon, lat)
 
-      area: dict = doc.get("area_range", doc.get("area"))
-      area = area.get("size_from", area.get("size"))
+      area_: dict = doc.get("area_range", doc.get("area"))
+      area: float = area_.get("size_from", area_.get("size"))
 
       if area == 0:
         continue
@@ -265,10 +266,10 @@ async def finn_ads():
         beds = beds.get("start")
 
       records.append(
-        RealEstateDoc(
+        RealEstateInfo(
           ad_id=doc["ad_id"],
+          geometry=point,
           time_published=doc["timestamp"],
-          coordinates=point,
           property_type=doc["property_type_description"],
           owner_type=doc["owner_type_description"],
           price_total=price["price_total"],
@@ -282,13 +283,13 @@ async def finn_ads():
 
     return records
 
-  parse = await fetch_ads(1)
+  parse = await fetch_ads(1, upper_price)
   total_ads = parse["results"]["metadata"]["result_size"]["match_count"]
 
   pages = parse["results"]["metadata"]["paging"]["last"]
   records = parse_json(parse["results"]["docs"])
 
-  tasks = [partial(fetch_ads, page) for page in range(2, pages + 1)]
+  tasks = [partial(fetch_ads, page, upper_price) for page in range(2, pages + 1)]
   parses = await aiometer.run_all(tasks, max_per_second=10)
 
   for parse in parses:
@@ -308,4 +309,9 @@ async def finn_ads():
   df = pd.DataFrame.from_records(records)
   df.drop_duplicates(inplace=True)
 
-  return df
+  df["sqm_price"] = df["price_total"] / df["area"]
+  gdf = gpd.GeoDataFrame(df, geometry="geometry", crs=4258)
+
+  today = dt.today().date().strftime("%Y%m%d")
+  path = STATIC_DIR / "geodata" / f"{today},finn_ads.json"
+  gdf.to_file(path, driver="GeoJSON", encoding="utf-8")

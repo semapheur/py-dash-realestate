@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime as dt
 from typing import TypedDict
 
 import branca.colormap as cm
@@ -9,8 +10,8 @@ import dash_leaflet.express as dlx
 import numpy as np
 
 from src.color import rgba_to_hex
-from src.const import DB_DIR
-from src.finn import choropleth_polys
+from src.const import DB_DIR, STATIC_DIR
+from src.finn import choropleth_polys, finn_ads
 from src.utils import load_json
 
 register_page(__name__, path="/")
@@ -90,8 +91,32 @@ def make_hideout(unit: str, prop: str, style: dict, classes: int = 5):
   return {"classes": ctg, "colorscale": colorscale, "style": style, "colorProp": prop}
 
 
-asyncio.run(choropleth_polys())
+async def update_geodata():
+  folder_path = STATIC_DIR / "geodata"
+  folder_path.mkdir(exist_ok=True, parents=True)
+  today = dt.today().date()
+  today_prefix = today.strftime("%Y%m%d")
+
+  for f in folder_path.iterdir():
+    if f.is_file() and not f.name.startswith(today_prefix):
+      f.unlink()
+
+  choropleth_files = set(folder_path.glob(f"{today_prefix}*.json"))
+  required_files = {
+    f"{today_prefix},choropleth_{unit}.json" for unit in ("municipality", "postal_area")
+  }
+  if choropleth_files != required_files:
+    await choropleth_polys()
+
+  ads_file = folder_path / f"{today_prefix},finn_ads.json"
+  if not ads_file.exists():
+    await finn_ads(5e6)
+
+
+asyncio.run(update_geodata())
 default_unit = "municipality"
+today = dt.today().date()
+today_prefix = today.strftime("%Y%m%d")
 
 style = dict(weight=1, opacity=1, color="black", fillOpacity=0.3)
 hideout = make_hideout(default_unit, "average_sqm_price", style)
@@ -131,10 +156,13 @@ layout = [
       info_box,
       dl.LayersControl(children=base_layer()),
       dl.GeoJSON(
+        id="geojson:realestate:ads",
+        url=f"/assets/geodata/{today_prefix},finn_ads.json",
+        cluster=True,
+      ),
+      dl.GeoJSON(
         id="geojson:realestate:choropleth",
-        # data=data.to_json(),
-        url=f"/assets/choropleth_{default_unit}.json",
-        # format='geobuf',
+        url=f"/assets/geodata/{today_prefix},choropleth_{default_unit}.json",
         style=style_handle,
         hideout=hideout,
         hoverStyle=arrow_function(dict(weight=2, color="white")),
@@ -178,7 +206,7 @@ def update_geojson(zoom: int, url: str):
 
     unit = "municipality"
 
-  url = f"/assets/choropleth_{unit}.json"
+  url = f"/assets/geodata/{today_prefix},choropleth_{unit}.json"
   hideout = make_hideout(unit, "average_sqm_price", style)
   ctg = [f"{c:.2E}" for c in hideout["classes"]]
 
