@@ -308,8 +308,12 @@ async def finn_ads(upper_price: float | None = None):
 
   df = pd.DataFrame.from_records(records)
   df.drop_duplicates(inplace=True)
-
   df["sqm_price"] = df["price_total"] / df["area"]
+
+  extrema = {"ad": [df["sqm_price"].min(), df["sqm_price"].max()]}
+  path = DB_DIR / "colorbar_values.json"
+  update_json(path, extrema)
+
   gdf = gpd.GeoDataFrame(df, geometry="geometry", crs=4258)
 
   today = dt.today().date().strftime("%Y%m%d")

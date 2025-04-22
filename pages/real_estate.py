@@ -16,6 +16,8 @@ from src.utils import load_json
 
 register_page(__name__, path="/")
 
+# Viridis: ['#440154', '#482777', '#3f4a8a', '#31678e', '#26838f', '#1f9d8a', '#6cce5a', '#b6de2b', '#fee825']
+
 
 class TileProps(TypedDict):
   url: str
@@ -74,7 +76,7 @@ def get_info(feature: dict | None = None):
   ]
 
 
-def make_hideout(unit: str, prop: str, style: dict, classes: int = 5):
+def make_choropleth_hideout(unit: str, prop: str, style: dict, classes: int = 5):
   path = DB_DIR / "colorbar_values.json"
   vmin, vmax = load_json(path)[unit]
 
@@ -89,6 +91,19 @@ def make_hideout(unit: str, prop: str, style: dict, classes: int = 5):
   colorscale = [rgba_to_hex(c) for c in colormap.colors]
 
   return {"classes": ctg, "colorscale": colorscale, "style": style, "colorProp": prop}
+
+
+def make_ad_hideout(prop: str, style: dict, colorscale: list[str]):
+  path = DB_DIR / "colorbar_values.json"
+  vmin, vmax = load_json(path)["ad"]
+
+  return {
+    "min": vmin,
+    "max": vmax,
+    "colorscale": colorscale,
+    "style": style,
+    "colorProp": prop,
+  }
 
 
 async def update_geodata():
@@ -118,11 +133,26 @@ default_unit = "municipality"
 today = dt.today().date()
 today_prefix = today.strftime("%Y%m%d")
 
-style = dict(weight=1, opacity=1, color="black", fillOpacity=0.3)
-hideout = make_hideout(default_unit, "average_sqm_price", style)
+path = DB_DIR / "colorbar_values.json"
+vmin, vmax = load_json(path)["ad"]
 
-style_handle = assign(
-  """function(feature, context) {
+classes = 5
+ctg = [0, *np.linspace(vmin, vmax, classes)]
+colormap = cm.LinearColormap(
+  ["gray", "green", "yellow", "red"],
+  vmin=vmin,
+  vmax=vmax,
+  index=[0.0, vmin, (vmax - vmin) / 2, vmax],
+).to_step(classes + 1)
+colorscale = [rgba_to_hex(c) for c in colormap.colors]
+
+choropleth_style = dict(weight=1, opacity=1, color="black", fillOpacity=0.3)
+# choropleth_hideout = make_choropleth_hideout(
+#  default_unit, "average_sqm_price", choropleth_style
+# )
+
+style_handle = assign("""
+function(feature, context) {
   const {classes, colorscale, style, colorProp} = context.hideout
   const value = feature.properties[colorProp]
   
@@ -137,14 +167,50 @@ style_handle = assign(
     }
   }
   return style
-}"""
-)
+}""")
 
 info_box = html.Div(
   className="absolute bottom-5 left-5 bg-white rounded p-5",
   children=[html.H3("Real estate price level"), html.Div(id="div:realestate:info")],
   style={"position": "absolute", "bottom": "3rem", "left": "1rem", "zIndex": "999"},
 )
+
+
+ad_style = dict(fillOpacity=1, stroke=False, radius=10)
+# ad_colorscale = ["gray", "green", "yellow", "red"]
+# ad_hideout = make_ad_hideout("sqm_price", ad_style, ad_colorscale)
+
+tooltip_template = (
+  "`<b>Total price:</b> ${feature.properties.price_total} NOK</br>"
+  "<b>Ask price:</b> ${feature.properties.price_suggestion} NOK</br>"
+  "<b>Sqm price:</b> ${feature.properties.sqm_price} NOK/m2</br>"
+  "<b>Area:</b> ${feature.properties.area} m2</br>"
+  "<b>Bedrooms:</b> ${feature.properties.bedrooms}`"
+)
+
+ad_tooltip = assign(f"""
+  function(feature, layer, context){{
+    layer.bindTooltip({tooltip_template})
+  }}
+""")
+
+ad_point = assign("""
+function(feature, latlng, context){
+  const {classes, colorscale, style, colorProp} = context.hideout
+  const value = feature.properties[colorProp]
+
+  if (value === null) {
+    style.fillColor = colorscale[0]
+    return L.circleMarker(latlng, style)
+  }
+
+  for (let i=0; i < classes.length; i++) {
+    if (value > classes[i]) {
+      style.fillColor = colorscale[i]
+    }
+  }
+  return L.circleMarker(latlng, style)
+}""")
 
 layout = [
   dl.Map(
@@ -159,24 +225,46 @@ layout = [
         id="geojson:realestate:ads",
         url=f"/assets/geodata/{today_prefix},finn_ads.json",
         cluster=True,
+        pointToLayer=ad_point,
+        onEachFeature=ad_tooltip,
+        hideout=dict(
+          classes=ctg,
+          colorscale=colorscale,
+          style=ad_style,
+          colorProp="sqm_price",
+        ),
       ),
       dl.GeoJSON(
         id="geojson:realestate:choropleth",
         url=f"/assets/geodata/{today_prefix},choropleth_{default_unit}.json",
-        style=style_handle,
-        hideout=hideout,
-        hoverStyle=arrow_function(dict(weight=2, color="white")),
         zoomToBoundsOnClick=True,
+        style=style_handle,
+        hoverStyle=arrow_function(dict(weight=2, color="white")),
+        hideout=dict(
+          classes=ctg,
+          colorscale=colorscale,
+          style=choropleth_style,
+          colorProp="average_sqm_price",
+        ),
       ),
-      dlx.categorical_colorbar(
-        id="colorbar:realestate",
-        categories=[f"{c:.2E}" for c in hideout["classes"]],
-        colorscale=hideout["colorscale"],
-        unit="/m2",
-        width=500,
-        height=10,
-        position="bottomleft",
+      dl.Colorbar(
+        colorscale="Viridis",
+        width=20,
+        height=200,
+        min=vmin,
+        max=vmax,
+        unit="NOK/m²",
+        position="topright",
       ),
+      # dlx.categorical_colorbar(
+      #  id="colorbar:realestate",
+      #  categories=[f"{c:.2E}" for c in ctg],
+      #  colorscale=colormap,
+      #  unit="NOK/m²",
+      #  width=500,
+      #  height=10,
+      #  position="bottomleft",
+      # ),
     ],
   ),
 ]
@@ -184,9 +272,9 @@ layout = [
 
 @callback(
   Output("geojson:realestate:choropleth", "url"),
-  Output("geojson:realestate:choropleth", "hideout"),
-  Output("colorbar:realestate", "tickText"),
-  Output("colorbar:realestate", "colorscale"),
+  # Output("geojson:realestate:choropleth", "hideout"),
+  # Output("colorbar:realestate", "tickText"),
+  # Output("colorbar:realestate", "colorscale"),
   Input("map:realestate", "zoom"),
   State("geojson:realestate:choropleth", "url"),
   prevent_initial_call=True,
@@ -207,10 +295,10 @@ def update_geojson(zoom: int, url: str):
     unit = "municipality"
 
   url = f"/assets/geodata/{today_prefix},choropleth_{unit}.json"
-  hideout = make_hideout(unit, "average_sqm_price", style)
-  ctg = [f"{c:.2E}" for c in hideout["classes"]]
+  # hideout = make_choropleth_hideout(unit, "average_sqm_price", choropleth_style)
+  # ctg = [f"{c:.2E}" for c in hideout["classes"]]
 
-  return url, hideout, ctg, hideout["colorscale"]
+  return url  # hideout, ctg, hideout["colorscale"]
 
 
 @callback(

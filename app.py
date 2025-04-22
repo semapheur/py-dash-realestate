@@ -1,6 +1,9 @@
 from dash import Dash, dcc, html, page_container, Input, Output
 
-external_scripts = [{"src": "https://cdn.tailwindcss.com"}]
+external_scripts = [
+  "https://cdn.tailwindcss.com",
+  "https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.1.0/chroma.min.js",
+]
 
 app = Dash(
   __name__,
@@ -9,7 +12,7 @@ app = Dash(
   suppress_callback_exceptions=True,
   external_scripts=external_scripts,
   # prevent_initial_callbacks='initial_duplicate'
-)  # run with 'python app.py'
+)
 
 # print(page_registry)
 
