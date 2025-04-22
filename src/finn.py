@@ -50,6 +50,7 @@ class RealEstateInfo(TypedDict):
   area: float
   bedrooms: int
   description: str
+  address: str
 
 
 def fetch_finn_statistics() -> dict:
@@ -278,6 +279,7 @@ async def finn_ads(upper_price: float | None = None):
           area=area,
           bedrooms=beds,
           description=doc["heading"],
+          address=doc["location"],
         )
       )
 

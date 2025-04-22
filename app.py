@@ -1,7 +1,7 @@
 from dash import Dash, dcc, html, page_container, Input, Output
 
 external_scripts = [
-  "https://cdn.tailwindcss.com",
+  "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4",
   "https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.1.0/chroma.min.js",
 ]
 

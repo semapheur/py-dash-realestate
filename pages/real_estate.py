@@ -179,11 +179,19 @@ function(feature, latlng, index, context) {
 }""")
 
 info_box = html.Div(
-  className="absolute bottom-5 left-5 bg-white rounded p-5 z-[999]",
+  className="absolute bottom-5 left-5 bg-white/50 backdrop-blur-sm rounded p-1 z-[999]",
   children=[html.H3("Real estate price level"), html.Div(id="div:realestate:info")],
 )
 
 column_defs = [
+  {
+    "field": "address",
+    "headerName": "Link",
+    "cellRenderer": "FinnLink",
+    "tooltipField": "description",
+  },
+  {"field": "property_type", "headerName": "Property type"},
+  {"field": "owner_type", "headerName": "Ownership"},
   {
     "field": "price_total",
     "headerName": "Total price",
@@ -209,13 +217,25 @@ column_defs = [
 
 data_path = STATIC_DIR / "geodata" / f"{today_prefix},finn_ads.json"
 ad_data = gpd.read_file(data_path)
-columns = ["price_total", "price_suggestion", "sqm_price", "area", "bedrooms"]
+columns = [
+  "address",
+  "property_type",
+  "owner_type",
+  "price_total",
+  "price_suggestion",
+  "sqm_price",
+  "area",
+  "bedrooms",
+  "ad_id",
+  "description",
+]
 
 layout = [
   dag.AgGrid(
     id="table:realestate",
     columnDefs=column_defs,
     rowData=ad_data[columns].to_dict("records"),
+    defaultColDef=dict(filter=True),
     style=dict(height="100%"),
   ),
   dl.Map(
