@@ -2,21 +2,17 @@ import asyncio
 from datetime import datetime as dt
 from typing import TypedDict
 
-import branca.colormap as cm
 from dash import callback, html, no_update, register_page, Input, Output, State
 from dash_extensions.javascript import arrow_function, assign
+import dash_ag_grid as dag
 import dash_leaflet as dl
-import dash_leaflet.express as dlx
-import numpy as np
+import geopandas as gpd
 
-from src.color import rgba_to_hex
 from src.const import DB_DIR, STATIC_DIR
 from src.finn import choropleth_polys, finn_ads
 from src.utils import load_json
 
 register_page(__name__, path="/")
-
-# Viridis: ['#440154', '#482777', '#3f4a8a', '#31678e', '#26838f', '#1f9d8a', '#6cce5a', '#b6de2b', '#fee825']
 
 
 class TileProps(TypedDict):
@@ -76,36 +72,6 @@ def get_info(feature: dict | None = None):
   ]
 
 
-def make_choropleth_hideout(unit: str, prop: str, style: dict, classes: int = 5):
-  path = DB_DIR / "colorbar_values.json"
-  vmin, vmax = load_json(path)[unit]
-
-  ctg = [0, *np.linspace(vmin, vmax, classes)]
-
-  colormap = cm.LinearColormap(
-    ["gray", "green", "yellow", "red"],
-    vmin=vmin,
-    vmax=vmax,
-    index=[0.0, vmin, (vmax - vmin) / 2, vmax],
-  ).to_step(classes + 1)
-  colorscale = [rgba_to_hex(c) for c in colormap.colors]
-
-  return {"classes": ctg, "colorscale": colorscale, "style": style, "colorProp": prop}
-
-
-def make_ad_hideout(prop: str, style: dict, colorscale: list[str]):
-  path = DB_DIR / "colorbar_values.json"
-  vmin, vmax = load_json(path)["ad"]
-
-  return {
-    "min": vmin,
-    "max": vmax,
-    "colorscale": colorscale,
-    "style": style,
-    "colorProp": prop,
-  }
-
-
 async def update_geodata():
   folder_path = STATIC_DIR / "geodata"
   folder_path.mkdir(exist_ok=True, parents=True)
@@ -160,10 +126,10 @@ function(feature, layer, context){
   }
                     
   layer.bindTooltip(`
-    <b>Total price:</b> ${feature.properties.price_total} NOK</br>
-    <b>Ask price:</b> ${feature.properties.price_suggestion} NOK</br>
-    <b>Sqm price:</b> ${feature.properties.sqm_price} NOK/m²</br>
-    <b>Area:</b> ${feature.properties.area} m²</br>
+    <b>Total price:</b> ${feature.properties.price_total.toLocaleString('en-US', { style: 'currency', currency: 'NOK' })}</br>
+    <b>Ask price:</b> ${feature.properties.price_suggestion.toLocaleString('en-US', { style: 'currency', currency: 'NOK' })} NOK</br>
+    <b>Sqm price:</b> ${feature.properties.sqm_price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOK/m<sup>2</sup></br>
+    <b>Area:</b> ${feature.properties.area.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m<sup>2</sup></br>
     <b>Bedrooms:</b> ${feature.properties.bedrooms}
   `)
 }
@@ -217,7 +183,41 @@ info_box = html.Div(
   children=[html.H3("Real estate price level"), html.Div(id="div:realestate:info")],
 )
 
+column_defs = [
+  {
+    "field": "price_total",
+    "headerName": "Total price",
+    "valueFormatter": {"function": "d3.format('(,.2f')(params.value)"},
+  },
+  {
+    "field": "price_suggestion",
+    "headerName": "Ask price",
+    "valueFormatter": {"function": "d3.format('(,.2f')(params.value)"},
+  },
+  {
+    "field": "sqm_price",
+    "headerName": "Price/sqm",
+    "valueFormatter": {"function": "d3.format('(,.2f')(params.value)"},
+  },
+  {
+    "field": "area",
+    "headerName": "Area",
+    "valueFormatter": {"function": "d3.format('(,.2f')(params.value)"},
+  },
+  {"field": "bedrooms", "headerName": "Bedrooms"},
+]
+
+data_path = STATIC_DIR / "geodata" / f"{today_prefix},finn_ads.json"
+ad_data = gpd.read_file(data_path)
+columns = ["price_total", "price_suggestion", "sqm_price", "area", "bedrooms"]
+
 layout = [
+  dag.AgGrid(
+    id="table:realestate",
+    columnDefs=column_defs,
+    rowData=ad_data[columns].to_dict("records"),
+    style=dict(height="100%"),
+  ),
   dl.Map(
     id="map:realestate",
     className="h-full",
@@ -275,15 +275,6 @@ layout = [
         unit="NOK/m²",
         position="topright",
       ),
-      # dlx.categorical_colorbar(
-      #  id="colorbar:realestate",
-      #  categories=[f"{c:.2E}" for c in ctg],
-      #  colorscale=colormap,
-      #  unit="NOK/m²",
-      #  width=500,
-      #  height=10,
-      #  position="bottomleft",
-      # ),
     ],
   ),
 ]
@@ -291,9 +282,6 @@ layout = [
 
 @callback(
   Output("geojson:realestate:choropleth", "url"),
-  # Output("geojson:realestate:choropleth", "hideout"),
-  # Output("colorbar:realestate", "tickText"),
-  # Output("colorbar:realestate", "colorscale"),
   Input("map:realestate", "zoom"),
   State("geojson:realestate:choropleth", "url"),
   prevent_initial_call=True,
@@ -314,10 +302,7 @@ def update_geojson(zoom: int, url: str):
     unit = "municipality"
 
   url = f"/assets/geodata/{today_prefix},choropleth_{unit}.json"
-  # hideout = make_choropleth_hideout(unit, "average_sqm_price", choropleth_style)
-  # ctg = [f"{c:.2E}" for c in hideout["classes"]]
-
-  return url  # hideout, ctg, hideout["colorscale"]
+  return url
 
 
 @callback(

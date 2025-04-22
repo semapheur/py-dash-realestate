@@ -25,10 +25,10 @@ window.dashExtensions = Object.assign({}, window.dashExtensions, {
                 }
 
                 layer.bindTooltip(`
-    <b>Total price:</b> ${feature.properties.price_total} NOK</br>
-    <b>Ask price:</b> ${feature.properties.price_suggestion} NOK</br>
-    <b>Sqm price:</b> ${feature.properties.sqm_price} NOK/m2</br>
-    <b>Area:</b> ${feature.properties.area} m2</br>
+    <b>Total price:</b> ${feature.properties.price_total.toLocaleString('en-US', { style: 'currency', currency: 'NOK' })}</br>
+    <b>Ask price:</b> ${feature.properties.price_suggestion.toLocaleString('en-US', { style: 'currency', currency: 'NOK' })} NOK</br>
+    <b>Sqm price:</b> ${feature.properties.sqm_price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOK/m<sup>2</sup></br>
+    <b>Area:</b> ${feature.properties.area.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m<sup>2</sup></br>
     <b>Bedrooms:</b> ${feature.properties.bedrooms}
   `)
             }
