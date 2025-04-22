@@ -134,83 +134,88 @@ today = dt.today().date()
 today_prefix = today.strftime("%Y%m%d")
 
 path = DB_DIR / "colorbar_values.json"
-vmin, vmax = load_json(path)["ad"]
+vmin, vmax = load_json(path)["county"]
 
-classes = 5
-ctg = [0, *np.linspace(vmin, vmax, classes)]
-colormap = cm.LinearColormap(
-  ["gray", "green", "yellow", "red"],
-  vmin=vmin,
-  vmax=vmax,
-  index=[0.0, vmin, (vmax - vmin) / 2, vmax],
-).to_step(classes + 1)
-colorscale = [rgba_to_hex(c) for c in colormap.colors]
-
-choropleth_style = dict(weight=1, opacity=1, color="black", fillOpacity=0.3)
-# choropleth_hideout = make_choropleth_hideout(
-#  default_unit, "average_sqm_price", choropleth_style
-# )
+colorscale = "Viridis"
 
 style_handle = assign("""
 function(feature, context) {
-  const {classes, colorscale, style, colorProp} = context.hideout
+  const {min, max, colorscale, style, colorProp} = context.hideout
+  const csc = chroma.scale(colorscale).domain([min, max])
+
   const value = feature.properties[colorProp]
   
   if (value === null) {
-    style.fillColor = colorscale[0]
     return style
   }
 
-  for (let i=0; i < classes.length; i++) {
-    if (value > classes[i]) {
-      style.fillColor = colorscale[i]
-    }
-  }
+  style.fillColor = csc(value)
   return style
 }""")
 
-info_box = html.Div(
-  className="absolute bottom-5 left-5 bg-white rounded p-5",
-  children=[html.H3("Real estate price level"), html.Div(id="div:realestate:info")],
-  style={"position": "absolute", "bottom": "3rem", "left": "1rem", "zIndex": "999"},
-)
-
-
-ad_style = dict(fillOpacity=1, stroke=False, radius=10)
-# ad_colorscale = ["gray", "green", "yellow", "red"]
-# ad_hideout = make_ad_hideout("sqm_price", ad_style, ad_colorscale)
-
-tooltip_template = (
-  "`<b>Total price:</b> ${feature.properties.price_total} NOK</br>"
-  "<b>Ask price:</b> ${feature.properties.price_suggestion} NOK</br>"
-  "<b>Sqm price:</b> ${feature.properties.sqm_price} NOK/m2</br>"
-  "<b>Area:</b> ${feature.properties.area} m2</br>"
-  "<b>Bedrooms:</b> ${feature.properties.bedrooms}`"
-)
-
-ad_tooltip = assign(f"""
-  function(feature, layer, context){{
-    layer.bindTooltip({tooltip_template})
-  }}
+ad_tooltip = assign("""
+function(feature, layer, context){
+  if (feature.properties.price_total === undefined) {
+    return
+  }
+                    
+  layer.bindTooltip(`
+    <b>Total price:</b> ${feature.properties.price_total} NOK</br>
+    <b>Ask price:</b> ${feature.properties.price_suggestion} NOK</br>
+    <b>Sqm price:</b> ${feature.properties.sqm_price} NOK/m²</br>
+    <b>Area:</b> ${feature.properties.area} m²</br>
+    <b>Bedrooms:</b> ${feature.properties.bedrooms}
+  `)
+}
 """)
 
 ad_point = assign("""
 function(feature, latlng, context){
-  const {classes, colorscale, style, colorProp} = context.hideout
+  const {min, max, colorscale, style, colorProp} = context.hideout
+  const csc = chroma.scale(colorscale).domain([min, max])
+
   const value = feature.properties[colorProp]
 
-  if (value === null) {
-    style.fillColor = colorscale[0]
+  if (value === undefined) {
     return L.circleMarker(latlng, style)
   }
 
-  for (let i=0; i < classes.length; i++) {
-    if (value > classes[i]) {
-      style.fillColor = colorscale[i]
-    }
-  }
+  style.fillColor = csc(value)
   return L.circleMarker(latlng, style)
 }""")
+
+ad_cluster = assign("""
+function(feature, latlng, index, context) {
+  const {min, max, colorscale, style, colorProp} = context.hideout
+  const csc = chroma.scale(colorscale).domain([min, max])
+                    
+  const leaves = index.getLeaves(feature.properties.cluster_id)
+  let valueSum = 0
+  for (let i = 0; i < leaves.length; ++i) {
+    valueSum += leaves[i].properties[colorProp]
+  }
+  const valueMean = valueSum / leaves.length
+
+  const scatterIcon = L.DivIcon.extend({
+    createIcon: function(oldIcon) {
+      let icon = L.DivIcon.prototype.createIcon.call(this, oldIcon);
+      icon.style.backgroundColor = this.options.color;
+      return icon;
+    }
+  })
+  const icon = new scatterIcon({
+    html: '<div style="background-color:white;"><span>' + feature.properties.point_count_abbreviated + '</span></div>',
+    className: "marker-cluster",
+    iconSize: L.point(40, 40),
+    color: csc(valueMean)
+  });
+  return L.marker(latlng, {icon : icon})
+}""")
+
+info_box = html.Div(
+  className="absolute bottom-5 left-5 bg-white rounded p-5 z-[999]",
+  children=[html.H3("Real estate price level"), html.Div(id="div:realestate:info")],
+)
 
 layout = [
   dl.Map(
@@ -226,11 +231,18 @@ layout = [
         url=f"/assets/geodata/{today_prefix},finn_ads.json",
         cluster=True,
         pointToLayer=ad_point,
+        clusterToLayer=ad_cluster,
         onEachFeature=ad_tooltip,
         hideout=dict(
-          classes=ctg,
+          min=vmin,
+          max=vmax,
           colorscale=colorscale,
-          style=ad_style,
+          style=dict(
+            fillColor="black",
+            fillOpacity=1,
+            stroke=False,
+            radius=10,
+          ),
           colorProp="sqm_price",
         ),
       ),
@@ -241,14 +253,21 @@ layout = [
         style=style_handle,
         hoverStyle=arrow_function(dict(weight=2, color="white")),
         hideout=dict(
-          classes=ctg,
-          colorscale=colorscale,
-          style=choropleth_style,
+          min=vmin,
+          max=vmax,
+          colorscale="Viridis",
+          style=dict(
+            weight=1,
+            opacity=1,
+            color="black",
+            fillColor="black",
+            fillOpacity=0.3,
+          ),
           colorProp="average_sqm_price",
         ),
       ),
       dl.Colorbar(
-        colorscale="Viridis",
+        colorscale=colorscale,
         width=20,
         height=200,
         min=vmin,
