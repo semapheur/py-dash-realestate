@@ -190,6 +190,13 @@ column_defs = [
     "cellRenderer": "FinnLink",
     "tooltipField": "description",
   },
+  {
+    "field": "date_published",
+    "headerName": "Published",
+    "valueFormatter": {
+      "function": "d3.timeFormat('%Y-%m-%d')(new Date(params.value * 1000))"
+    },
+  },
   {"field": "property_type", "headerName": "Property type"},
   {"field": "owner_type", "headerName": "Ownership"},
   {
@@ -219,6 +226,7 @@ data_path = STATIC_DIR / "geodata" / f"{today_prefix},finn_ads.json"
 ad_data = gpd.read_file(data_path)
 columns = [
   "address",
+  "date_published",
   "property_type",
   "owner_type",
   "price_total",

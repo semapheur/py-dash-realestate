@@ -41,7 +41,7 @@ class PriceInfo(TypedDict, total=False):
 class RealEstateInfo(TypedDict):
   ad_id: int
   geometry: Point
-  time_published: int
+  date_published: int
   property_type: str
   owner_type: str
   price_total: float
@@ -270,7 +270,7 @@ async def finn_ads(upper_price: float | None = None):
         RealEstateInfo(
           ad_id=doc["ad_id"],
           geometry=point,
-          time_published=doc["timestamp"],
+          date_published=doc["timestamp"],
           property_type=doc["property_type_description"],
           owner_type=doc["owner_type_description"],
           price_total=price["price_total"],
@@ -310,6 +310,11 @@ async def finn_ads(upper_price: float | None = None):
 
   df = pd.DataFrame.from_records(records)
   df.drop_duplicates(inplace=True)
+
+  df["date_published"] = (
+    pd.to_datetime(df["date_published"], unit="ms").dt.strftime("%Y%m%d").astype(int)
+  )
+
   df["sqm_price"] = df["price_total"] / df["area"]
 
   extrema = {"ad": [df["sqm_price"].min(), df["sqm_price"].max()]}
